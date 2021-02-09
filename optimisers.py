@@ -13,6 +13,7 @@ class Optimiser():
         self.max_norm      = None
         self.gradient_clip = None
         self.decay         = None
+        self.t             = 0
         for k, v in kwargs.items():
             if k in exceptions: continue
             if k == 'kwargs':
@@ -20,7 +21,6 @@ class Optimiser():
                     setattr(self, k, val)
             else:
                 setattr(self, k, v)
-        self.t = 1
         
     def _clip(self, gradient):
         if self.gradient_clip:
