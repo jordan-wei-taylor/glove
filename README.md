@@ -13,7 +13,7 @@ TODO:
 Example use:
 
 ```python
-from   glove  import get_preprocessor, Glove
+from   glove  import get_preprocessor, logger, Glove
 
 import pandas as pd
 import numpy  as np
