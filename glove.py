@@ -237,6 +237,7 @@ class Glove():
         N         = shape[0] ** 2
         for i in range(epochs):
             
+            # Early stopping condition if over the last "stop" iterations there is a total variation of less than "tau"
             if stop is not None and i >= stop:
                 if L[i - stop: i].max() - L[i - stop: i].min() <= tau:
                     break
@@ -265,8 +266,10 @@ class Glove():
             
             u.increment()
             u.display(loss = L[i], best = lo)
+        else:
+            # Enters the else statement only if the for loop completes without break
+            i += 1
             
-        i     += 1
         delta  = (W1[r] * W2[c]).sum(axis = 1) + b1[r] + b2[c] - lx
         L[i]   = np.sum(fx * np.square(delta)) / N
         
