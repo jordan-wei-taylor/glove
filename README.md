@@ -13,8 +13,8 @@ TODO:
 Example use:
 
 ```python
-from   glove       import get_preprocessor, Glove, logger
-from   optimisers  import *
+from   glove  import get_preprocessor, Glove, logger
+
 import pandas as pd
 import numpy  as np
 import os
@@ -51,7 +51,8 @@ print()
 for dim in [2, 10, 50, 100, 200, 300, 400, 500, 600]:
     # Needs more iterations to converge for higher dims
     glove.fit(dim, eta = 1e-2, epochs = 200 if dim < 300 else 1000, optimiser = 'adam', decay = 1e-2)
-    glove.dump_vectors(f'{folder}/glove-{dim}.npz')
+    filename = f'glove-{dim}.npz'
+    glove.dump_vectors(f'{folder}/{filename}')
     logger(f'saved {filename}')
     print()
 ```
