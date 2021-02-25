@@ -1,16 +1,30 @@
 from   datetime import datetime, timedelta
 import logging
+import os
 
-clear_line  = ' ' * 150
+CLEAR_LINE  = ' ' * 150
+PATH        = None
+rprint      = logging.info
 
-logging.basicConfig(format = f'\r{clear_line}\r[%(asctime)s] %(message)s', datefmt='%d-%m-%Y %X', level = logging.INFO)
+logging.basicConfig(format = f'\r{CLEAR_LINE}\r[%(asctime)s] %(message)s', datefmt = '%d-%m-%Y %X', level = logging.INFO)
 logging.StreamHandler.terminator = ""
 
-rprint = logging.info
-
+def remove(path):
+    if 'log' in os.listdir(path):
+        os.remove(f'{path}/log')
+        
+def set_log_path(path):  
+    global PATH
+    remove(path)
+    PATH = path + '/log'
+                   
 def logger(msg):
+    global PATH
     rprint(msg + '\n')
-    
+    if PATH is not None:
+        with open(PATH, 'a+') as f:
+            f.write(datetime.now().strftime('[%d-%M-%Y %X] ') + msg + '\n')
+        
 class Update():
     
     def __init__(self, msg, n, start = 0):

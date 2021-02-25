@@ -10,8 +10,10 @@
 
 from   utility    import Update, logger, rprint
 from   optimisers import get_optimiser
+from   scipy      import sparse
 
 import numpy as np
+import gc
 
 def get_preprocessor(html = True, lower = True, stop = False, stem = False, min_length = 0):
     """ Simplistic preprocessor for text """
@@ -93,7 +95,7 @@ class Glove():
         random_state : int [OPTIONAL]
                        Random number generation for reproducibility via numpy.random.seed.
     """
-    def __init__(self, documents = None, preprocessor = None, alpha = 0.75, window_size = 15, x_min = 20, x_max = 100, random_state = None):
+    def __init__(self, documents = None, preprocessor = None, alpha = 0.75, window_size = 15, x_min = 1, x_max = 10, random_state = None):
         if preprocessor is None:
             preprocessor = lambda x : x.split('')
         
@@ -159,8 +161,8 @@ class Glove():
         
         rprint('converting to sparse indices and values')
         # Store rows and values
-        self.r, self.c = np.array(list(sparse)).T
-        self.x         = np.array(list(sparse.values()))
+        self.r, self.c = np.array(list(sparse)).T.astype('int32')
+        self.x         = np.array(list(sparse.values())).astype('int32')
             
         logger(f'computed co-occurance matrix with {len(self.V) ** 2:,d} elements and {len(self.x):,d} interactions')
         
@@ -169,7 +171,7 @@ class Glove():
     def compute_min_idx(self):
         if self.x_min is not None:
             self._idx = np.where(self.x_min <= self.x)[0]
-            logger(f'{len(self._idx):,d} interactions above x_min')
+            logger(f'{len(self._idx):,d} interactions above x_min = {self.x_min}')
             
     def load(self, path):
         """ Loads vocabulary and sparse co-occurance matrix """
@@ -193,39 +195,60 @@ class Glove():
         
         # Filter out not frequent enough co-occurances
         if self.x_min is not None:
-            r, c, x = r[self._idx], c[self._idx], x[self._idx]
+            _r, _c, x = r[self._idx], c[self._idx], x[self._idx]
+            ur        = {r : i for i, r in enumerate(np.unique(_r))}
+            uc        = {c : i for i, c in enumerate(np.unique(_c))}
+            r         = np.array([ur[r] for r in _r]).astype('int32')
+            c         = np.array([uc[c] for c in _c]).astype('int32')
+            
+            # Free memory
+            del _r, _c, ur, uc; gc.collect()
             
         # Compute max if not set, then cap values
         x_max      = x.max() if self.x_max is None else self.x_max
         if self.x_max is not None:
             rprint('setting x_max upper bound')
-            x      = np.minimum(x, x_max)
+            _x     = np.minimum(x, x_max)
             
-        # Precompute f(X) and log(X)
-        rprint('precomputing f(X)')
-        fx        = (x / x_max) ** self.alpha
+            rprint('precomputing f(X)')
+            fx     = (_x / x_max) ** self.alpha
+            
+            # Free memory
+            del _x; gc.collect()
+        else:
+            rprint('precomputing f(X)')
+            fx     = (x / x_max) ** self.alpha
         
         rprint('precomputing log(X)')
-        lx        = np.log(x)
+        lx     = np.log(x)
+        
+        
+        # Free memory
+        del x; gc.collect()
         
         np.random.seed(self.random_state)
         
-        shape     = len(self.V), vector_size
+        shape     = len(np.unique(r)), vector_size
         
         rprint('initialising word vectors and bias vector variables')
-        W1        = np.random.normal(scale = 0.5, size = shape)
-        W2        = np.random.normal(scale = 0.5, size = shape)
-        b1        = np.random.normal(scale = 0.5, size = shape[0])
-        b2        = np.random.normal(scale = 0.5, size = shape[0])
+        W1        = np.random.normal(scale = 0.5, size = shape).astype('float32')
+        W2        = np.random.normal(scale = 0.5, size = shape).astype('float32')
+        b1        = np.random.normal(scale = 0.5, size = shape[0]).astype('float32')
+        b2        = np.random.normal(scale = 0.5, size = shape[0]).astype('float32')
         
         # As sparse matrix may have multiple entries per row, compute these entries before hand for later ease
         rprint('computing masks for optimisation')
-        rmasks = [[] for i in range(shape[0])]
-        cmasks = [[] for i in range(shape[0])]
-        for i, val in enumerate(r):
-            rmasks[val].append(i)
-        for i, val in enumerate(c):
-            cmasks[val].append(i)
+        rmasks = {}
+        cmasks = {}
+        
+        for d, masks in zip([r, c], [rmasks, cmasks]):
+            for i, val in enumerate(d):
+                if val not in masks:
+                    masks[val] = []
+                masks[val] += [i]
+        
+        # Free memory (masks is linked to cmasks so cannot delete it)
+        del d; gc.collect()
         
         # Initialise optimisers (W1, W2, b)
         optim     = [optimiser(eta = eta, **optimiser_kwargs) for _ in range(3)]
@@ -233,17 +256,17 @@ class Glove():
         
         u         = Update('optimising epoch', epochs)
         L         = self.L = np.ones(epochs + 1) * np.inf
+        N         = fx.sum()
         lo        = np.inf
-        N         = shape[0] ** 2
         for i in range(epochs):
             
             # Early stopping condition if over the last "stop" iterations there is a total variation of less than "tau"
             if stop is not None and i >= stop:
-                if L[i - stop: i].max() - L[i - stop: i].min() <= tau:
+                if (L[i - stop: i].max() / L[i - stop: i].min() - 1) <= tau:
                     break
                 
             delta           = (W1[r] * W2[c]).sum(axis = 1) + b1[r] + b2[c] - lx
-            L[i]            = np.sum(fx * np.square(delta)) / N
+            L[i]            = np.mean(fx * np.square(delta))
             
             # Store the best
             if L[i] < lo:
@@ -251,19 +274,48 @@ class Glove():
                 lo   = L[i]
     
             # Chain rule of loss function of the form L = fx * (delta ^ 2) w.r.t. delta (ignoring proportional constants)
-            chain = fx * delta
+            chain = (fx * delta)
 
             # Compute gradients to update W and b i.e. differentiate delta w.r.t W and b respectively
-            gw1   = optim[0](chain[:,None] * W2[c])
-            gw2   = optim[1](chain[:,None] * W1[r])
-            gb    = optim[2](chain)
+            #
+            # Steps:
+            #   • Compute adjusted gradients using optimiser
+            #   • Aggregate gradients for each token (row of W)
+            #   • Update parameter
+            #   • Free space to reduce memory cost
+            #
+            # Do for W1 (optim[0]), W2 (optim[1]), b1 (optim[2]), b2 (optim[2])
+            # Gradients for b1 and b2 are similar just with different aggregation masks r and c
+            gw1   = optim[0](np.einsum('c,cv->cv', chain, W2[c]).astype('float32'))
+            gW1   = np.zeros_like(W1)
+            for j, mask in rmasks.items():
+                gW1[j] += gw1[mask].mean(axis = 0)
+            W1   -= gW1
+            del gw1, gW1; gc.collect()
             
-            # Apply mask and sum to get total updates (for each row, accumlate gradients from sparse locations along those rows)
-            W1   -= [gw1[mask].sum(axis = 0) for mask in rmasks]
-            W2   -= [gw2[mask].sum(axis = 0) for mask in cmasks]
-            b1   -= [gb[mask].sum(axis = 0)  for mask in rmasks]
-            b2   -= [gb[mask].sum(axis = 0)  for mask in cmasks]
+            gw2   = optim[1](np.einsum('c,cv->cv', chain, W1[r]).astype('float32'))
+            gW2   = np.zeros_like(W2)
+            for j, mask in cmasks.items():
+                gW2[j] += gw2[mask].mean(axis = 0)
+            W2   -= gW2
+            del gw2, gW2; gc.collect()
             
+            # Common gradients for b1 and b2 with different aggregations
+            gb    = optim[2](chain.astype('float32'))
+            
+            gb1   = np.zeros_like(b1)
+            for j, mask in rmasks.items():
+                gb1[j] += gb[mask].mean(axis = 0)
+            b1   -= gb1
+            del gb1; gc.collect()
+            
+            gb2   = np.zeros_like(b2)
+            for j, mask in cmasks.items():
+                gb2[j] += gb[mask].mean(axis = 0)
+            b2   -= gb2
+            del chain, gb2; gc.collect()
+            
+            # Verbose update
             u.increment()
             u.display(loss = L[i], best = lo)
         else:
@@ -282,10 +334,18 @@ class Glove():
 
         return self
         
-    def dump_co_occurance(self, path):
+    def dump_co_occurance(self, path, **kwargs):
         """ Dumps the vocabulary and co-occurance matrix """
-        np.savez(path, V = self.V, r = self.r, c = self.c, x = self.x)
+        np.savez(path, V = self.V, r = self.r, c = self.c, x = self.x, **kwargs)
+        logger(f'dumped co-occurance at "{path}"')
         
-    def dump_vectors(self, path):
+    def dump_vectors(self, path, **kwargs):
         """ Dumps the word and context weight matrices and bias vectors """
-        np.savez(path, W = self.W, Wc = self.Wc, b = self.b, bc = self.bc)
+        if self.x_min is not None:
+            rprint('computing valid mask')
+            sp    = sparse.csr_matrix((self.x, (self.r, self.c)))
+            valid = np.where(sp.max(axis = 1).A.flatten() > self.x_min)[0]
+            np.savez(path, W = self.W, Wc = self.Wc, b = self.b, bc = self.bc, L = self.L, valid = valid)
+        else:
+            np.savez(path, W = self.W, Wc = self.Wc, b = self.b, bc = self.bc, L = self.L, **kwargs)
+        logger(f'dumped vectors at "{path}"')

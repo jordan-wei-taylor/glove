@@ -13,7 +13,7 @@ class Optimiser():
         self.max_norm      = None
         self.gradient_clip = None
         self.decay         = None
-        self.t             = 0
+        self.t             = 1
         for k, v in kwargs.items():
             if k in exceptions: continue
             if k == 'kwargs':
