@@ -1,5 +1,4 @@
 from   glove       import get_preprocessor, Glove, logger
-from   optimisers  import *
 import pandas as pd
 import numpy  as np
 import os
@@ -23,8 +22,7 @@ split = int(0.8 * n)
 train = idx[:split]
 test  = idx[split:]
 
-X_train, X_test = data['review'   ].values[train], data['review'   ].values[test]
-y_train, y_test = data['sentiment'].values[train], data['sentiment'].values[test]
+X_train = data['review'].values[train]
 
 del data; gc.collect()
 
@@ -41,6 +39,8 @@ else:
     glove  = Glove(X_train, preprocessor, random_state = 2021)
     glove.dump_co_occurance(f'{folder}/{file}')
     logger(f'saved {file}')
+
+del X_train; gc.collect()
 
 print()
 for dim in [2, 10, 50, 100, 200, 300, 400, 500, 600]:
