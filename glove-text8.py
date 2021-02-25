@@ -4,7 +4,7 @@ from   utility import set_log_path
 from   time    import process_time
 import pandas  as pd
 import numpy   as np
-import os
+import os, gc
 
 folder = 'dump-text8-2'
 os.makedirs(folder, exist_ok = True)
@@ -36,11 +36,13 @@ else:
     time   = process_time() - start
     glove.dump_co_occurance(f'{folder}/{file}', time = time)
 
+del words; gc.collect()
+
 print()
 for dim in [2, 10, 50, 100, 200, 300, 400, 500, 600]:
     filename = f'glove-{dim}.npz'
     start    = process_time()
-    glove.fit(dim, eta = 0.5, epochs = 500, optimiser = 'adam', decay = 1e-2, stop = 10, tau = 1e-5)
+    glove.fit(dim, eta = 0.5, epochs = 500, optimiser = 'adam', decay = 1e-2)
     time     = process_time() - start
     glove.dump_vectors(f'{folder}/{filename}', time = time)
     print()
